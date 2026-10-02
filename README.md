@@ -63,30 +63,7 @@ cd server
 cp .env.example .env    # Then edit .env with real values
 ```
 
-**Required values in `server/.env`:**
 
-```
-PORT=5000
-NODE_ENV=development
-MONGODB_URI=mongodb://localhost:27017/rangiloraas
-
-# GENERATE strong secrets — run: openssl rand -hex 64
-JWT_SECRET=<64-byte hex string>
-JWT_REFRESH_SECRET=<different 64-byte hex string>
-JWT_ACCESS_EXPIRY=15m
-JWT_REFRESH_EXPIRY=7d
-
-RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxx
-RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxxxx
-RAZORPAY_WEBHOOK_SECRET=xxxxxxxxxxxxxxxxxxxx
-
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=your-16-char-app-password
-
-CLIENT_URL=http://localhost:5173
-```
 
 ### 4. Seed Database (Admin + Pass Types)
 
