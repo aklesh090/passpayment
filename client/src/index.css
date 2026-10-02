@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #e53e3e;
+  --color-primary-dark: #c53030;
+  --color-secondary: #f6ad55;
+  --color-dark: #1a202c;
+  --color-darker: #11141a;
+  
+  --font-sans: "Inter", sans-serif;
+  --font-heading: "Outfit", sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-zinc-950 text-slate-50 font-sans;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 inline-flex items-center justify-center;
+  }
+  .btn-secondary {
+    @apply bg-orange-500 hover:bg-orange-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 inline-flex items-center justify-center;
+  }
+  .btn-outline {
+    @apply border-2 border-red-600 text-red-500 hover:bg-red-600 hover:text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 inline-flex items-center justify-center;
+  }
+  .glass-panel {
+    @apply bg-zinc-900/80 backdrop-blur-md border border-zinc-800 rounded-2xl shadow-xl;
+  }
+  .input-field {
+    @apply w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-red-500 transition-shadow;
+  }
+}
