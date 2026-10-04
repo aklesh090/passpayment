@@ -29,16 +29,25 @@ const PassDetail = () => {
     fetchTicket();
   }, [id]);
 
+  const [downloadError, setDownloadError] = useState(null);
+
   const handleDownload = async () => {
     try {
       setDownloading(true);
-      await ticketService.downloadPDF(ticket.ticketId || ticket._id, ticket.ticketId);
+      setDownloadError(null);
+      const result = await ticketService.downloadPDF(ticket.ticketId || ticket._id, ticket.ticketId);
+      if (result?.opened) {
+        // iOS Safari: file opened in new tab
+        setDownloadError({ type: 'info', message: 'Your PDF has opened in a new tab. Use Share → Save to Files to save it.' });
+      }
     } catch (err) {
-      alert('Failed to download PDF pass: ' + (err.message || 'Error occurred'));
+      const msg = err.message || 'Unable to generate your pass right now. Please try again.';
+      setDownloadError({ type: 'error', message: msg });
     } finally {
       setDownloading(false);
     }
   };
+
 
   if (loading) return <LoadingState message="Loading digital pass..." />;
   if (error) return <ErrorState message={error} onRetry={fetchTicket} />;
@@ -145,6 +154,17 @@ const PassDetail = () => {
               {downloading ? 'Generating PDF...' : 'Download PDF Pass'}
             </button>
           </div>
+
+          {/* Download feedback (iOS fallback / error) */}
+          {downloadError && (
+            <div className={`mt-3 px-4 py-3 rounded-xl text-sm ${
+              downloadError.type === 'info'
+                ? 'bg-sky-900/30 border border-sky-500/30 text-sky-300'
+                : 'bg-red-900/30 border border-red-500/30 text-red-300'
+            }`}>
+              {downloadError.message}
+            </div>
+          )}
         </div>
 
         {/* Footer Entry Note */}

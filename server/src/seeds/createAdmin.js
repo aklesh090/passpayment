@@ -1,54 +1,59 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 const mongoose = require('mongoose');
 const env = require('../config/env');
 const User = require('../models/User');
 
-async function createOrPromoteAdmin() {
-  const email = process.argv[2];
+async function createAdmin() {
+  const email = process.env.ADMIN_EMAIL || process.argv[2];
+  const password = process.env.ADMIN_PASSWORD || process.argv[3];
+  const name = process.env.ADMIN_NAME || process.argv[4] || 'System Admin';
+  const phone = process.env.ADMIN_PHONE || '9999999999';
 
-  if (!email) {
-    console.log('Usage: node src/seeds/createAdmin.js <email> [optional_password] [optional_name]');
-    console.log('Example: node src/seeds/createAdmin.js admin@rangiloraas.com Admin123! "Super Admin"');
+  if (!email || !password) {
+    console.error('❌ Usage: ADMIN_EMAIL=<email> ADMIN_PASSWORD=<password> node src/seeds/createAdmin.js');
+    console.error('   Or: node src/seeds/createAdmin.js <email> <password> [name]');
     process.exit(1);
   }
-
-  const password = process.argv[3] || 'Admin@123456';
-  const name = process.argv[4] || 'Admin User';
-  const phone = '9999999999';
 
   try {
     await mongoose.connect(env.MONGODB_URI);
     console.log('Connected to MongoDB.');
 
-    let user = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = email.toLowerCase().trim();
+    const existingUser = await User.findOne({ email: normalizedEmail });
 
-    if (user) {
-      user.role = 'admin';
-      if (process.argv[3]) {
-        user.passwordHash = password; // pre('save') hook will hash it
+    if (existingUser) {
+      if (existingUser.role === 'admin') {
+        console.log(`ℹ️ Admin user already exists with email: ${normalizedEmail}`);
+        await mongoose.disconnect();
+        process.exit(0);
+      } else {
+        console.error(`⚠️ Error: Email '${normalizedEmail}' already belongs to a normal user (role: 'user'). Overwrite blocked.`);
+        await mongoose.disconnect();
+        process.exit(1);
       }
-      await user.save();
-      console.log(`✅ Success: User with email "${email}" has been updated with role: "admin" and the provided password.`);
-    } else {
-      user = await User.create({
-        name,
-        email: email.toLowerCase(),
-        phone,
-        passwordHash: password, // pre('save') hook will hash it
-        role: 'admin',
-      });
-      console.log(`✅ Success: Created new admin user!`);
-      console.log(`   Email:    ${email}`);
-      console.log(`   Password: ${password}`);
-      console.log(`   Role:     admin`);
     }
+
+    const newAdmin = await User.create({
+      name,
+      email: normalizedEmail,
+      phone,
+      passwordHash: password, // User model pre('save') hook automatically hashes with bcrypt
+      role: 'admin',
+    });
+
+    console.log(`✅ Admin user created successfully!`);
+    console.log(`   Email: ${newAdmin.email}`);
+    console.log(`   Role:  ${newAdmin.role}`);
+    console.log(`   ID:    ${newAdmin._id}`);
 
     await mongoose.disconnect();
     process.exit(0);
   } catch (err) {
-    console.error('❌ Error creating/promoting admin:', err.message);
+    console.error('❌ Error creating admin user:', err.message);
     process.exit(1);
   }
 }
 
-createOrPromoteAdmin();
+createAdmin();

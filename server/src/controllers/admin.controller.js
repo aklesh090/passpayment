@@ -2,7 +2,10 @@ const Order = require('../models/Order');
 const Ticket = require('../models/Ticket');
 const PassType = require('../models/PassType');
 const User = require('../models/User');
+const TicketEntry = require('../models/TicketEntry');
 const { AppError } = require('../utils/helpers');
+const { validateTicketForEntry, RESULT } = require('../services/ticketValidation.service');
+const { getCurrentEventSession } = require('../services/eventSession.service');
 
 /**
  * GET /api/admin/dashboard
@@ -219,155 +222,158 @@ exports.cancelTicket = async (req, res, next) => {
 };
 
 /**
- * POST /api/admin/verify-ticket
- * Verify a ticket ID (via QR token) and check-in for a specific day.
- * Must verify order is PAID, ticket exists, ticket ACTIVE, and not USED.
+ * GET /api/admin/session
+ * Returns the current event session info (server-authoritative).
+ * Used by the scanner UI to display which day is active.
+ * The frontend MUST NOT trust this to bypass validation — it is informational only.
  */
-exports.verifyTicket = async (req, res, next) => {
+exports.getEventSession = async (req, res, next) => {
   try {
-    const { token, day } = req.body;
-
-    if (!token || !day) {
-      throw new AppError('token and day are required', 400);
-    }
-
-    if (day < 1 || day > 9) {
-      throw new AppError('Day must be between 1 and 9', 400);
-    }
-
-    const ticket = await Ticket.findOne({ qrToken: token }).populate('order');
-
-    if (!ticket) {
-      return res.json({
-        success: true,
-        valid: false,
-        reason: 'Ticket not found',
-      });
-    }
-
-    if (ticket.order.paymentStatus !== 'paid') {
-      return res.json({
-        success: true,
-        valid: false,
-        reason: `Order payment status is ${ticket.order.paymentStatus}`,
-        ticket: {
-          ticketId: ticket.ticketId,
-          holderName: ticket.holderName,
-          passName: ticket.passName
-        }
-      });
-    }
-
-    if (ticket.status !== 'active') {
-      return res.json({
-        success: true,
-        valid: false,
-        reason: `Ticket is ${ticket.status}`,
-        ticket: {
-          ticketId: ticket.ticketId,
-          holderName: ticket.holderName,
-          passName: ticket.passName
-        }
-      });
-    }
-
-    // Check if this pass is valid for the requested day
-    if (!ticket.validDays.includes(Number(day))) {
-      return res.json({
-        success: true,
-        valid: false,
-        reason: `Ticket not valid for Day ${day}`,
-        ticket: {
-          ticketId: ticket.ticketId,
-          holderName: ticket.holderName,
-          passName: ticket.passName,
-          validDays: ticket.validDays,
-        },
-      });
-    }
-
-    // Check if already checked in today
-    const alreadyCheckedIn = ticket.checkIns.some((c) => c.day === Number(day));
-    if (alreadyCheckedIn) {
-      return res.json({
-        success: true,
-        valid: false,
-        reason: `ALREADY USED for Day ${day}`,
-        ticket: {
-          ticketId: ticket.ticketId,
-          holderName: ticket.holderName,
-          passName: ticket.passName,
-        },
-      });
-    }
-
-    // ── Atomic check-in: only add if no existing check-in for this day ──
-    // The $not/$elemMatch query ensures this is race-condition safe.
-    const updatedTicket = await Ticket.findOneAndUpdate(
-      {
-        _id: ticket._id,
-        status: 'active',
-        'checkIns.day': { $ne: Number(day) }, // Only proceed if day not already checked in
-      },
-      {
-        $push: {
-          checkIns: {
-            day: Number(day),
-            checkedInAt: new Date(),
-            checkedInBy: req.user._id,
-          },
-        },
-      },
-      { new: true }
-    );
-
-    if (!updatedTicket) {
-      // Either ticket was updated by concurrent scan, or status changed
-      // Re-fetch to determine which case it is
-      const recheck = await Ticket.findById(ticket._id);
-      if (recheck.checkIns.some((c) => c.day === Number(day))) {
-        return res.json({
-          success: true,
-          valid: false,
-          reason: `ALREADY USED for Day ${day}`,
-          ticket: {
-            ticketId: ticket.ticketId,
-            holderName: ticket.holderName,
-            passName: ticket.passName,
-          },
-        });
-      }
-      return res.json({
-        success: true,
-        valid: false,
-        reason: 'Ticket status changed. Please re-scan.',
-        ticket: {
-          ticketId: ticket.ticketId,
-          holderName: ticket.holderName,
-          passName: ticket.passName,
-        },
-      });
-    }
-
-    // Update status to 'used' if all valid days are now consumed (or day pass)
-    const totalCheckIns = updatedTicket.checkIns.length;
-    const totalValidDays = updatedTicket.validDays.length;
-    if (totalValidDays === 1 || totalCheckIns === totalValidDays) {
-      await Ticket.findByIdAndUpdate(updatedTicket._id, { $set: { status: 'used' } });
-    }
-
+    const session = getCurrentEventSession();
     res.json({
       success: true,
-      valid: true,
-      reason: 'Admitted',
-      ticket: {
-        ticketId: updatedTicket.ticketId,
-        holderName: updatedTicket.holderName,
-        passName: updatedTicket.passName,
-        validDays: updatedTicket.validDays,
+      session: {
+        active:       session.active,
+        eventDay:     session.eventDay,
+        sessionStart: session.sessionStart,
+        sessionEnd:   session.sessionEnd,
+        message:      session.message,
       },
     });
   } catch (error) {
     next(error);
   }
 };
+
+/**
+ * POST /api/admin/verify-ticket
+ *
+ * ── REWRITTEN: now uses ticketValidation.service ──
+ *
+ * Accepts either:
+ *   - `token` = qrToken (64-char hex from QR code scan)
+ *   - `token` = ticketId (human-readable, e.g. RR20-VIP-00001-A4B2)
+ *
+ * The `day` field from the request body is IGNORED for security.
+ * Event day is always resolved server-side from the authoritative schedule.
+ *
+ * Returns a machine-readable `result` code and human-readable `message`.
+ */
+exports.verifyTicket = async (req, res, next) => {
+  try {
+    const { token } = req.body;
+    // NOTE: `day` from body is intentionally ignored — server determines event day.
+
+    if (!token || typeof token !== 'string' || token.trim().length === 0) {
+      throw new AppError('token is required', 400);
+    }
+
+    const outcome = await validateTicketForEntry({
+      identifier: token.trim(),
+      scannedBy:  req.user._id,
+    });
+
+    // Map to response shape (backward-compatible + enhanced)
+    return res.json({
+      success: true,
+      valid:    outcome.valid,
+      result:   outcome.result,
+      reason:   outcome.message,   // kept for backward compat with old scanner UI
+      message:  outcome.message,
+      eventDay: outcome.eventDay,
+      eventDate: outcome.eventDate || null,
+      ticket:   outcome.ticket || null,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/admin/tickets/:id/entries
+ * List all entry records for a specific ticket (by MongoDB _id).
+ */
+exports.getTicketEntries = async (req, res, next) => {
+  try {
+    const entries = await TicketEntry.find({ ticket: req.params.id })
+      .populate('scannedBy', 'name email')
+      .sort({ eventDay: 1 });
+
+    res.json({
+      success: true,
+      count: entries.length,
+      entries,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/admin/reports/csv
+ *
+ * Server-side CSV sales report download.
+ *
+ * WHY server-side:
+ *   The previous client-side `data:text/csv;...` URI approach fails completely
+ *   on iOS Safari — the browser navigates to the raw data URI instead of
+ *   triggering a download, making the report inaccessible on mobile.
+ *
+ *   By generating the CSV on the server and streaming it with the correct
+ *   Content-Disposition: attachment header, the browser receives a proper
+ *   HTTP download in ALL environments (Android Chrome, iPhone Safari, desktop).
+ *
+ * SECURITY: Protected by verifyJWT + requireAdmin (applied at router level).
+ *   Normal users receive HTTP 403 before reaching this handler.
+ */
+exports.downloadSalesReportCSV = async (req, res, next) => {
+  try {
+    const orders = await Order.find({ paymentStatus: 'paid' })
+      .select('totalAmount items createdAt buyerName buyerEmail orderNumber');
+
+    const salesByPassType = {};
+    let totalRevenue = 0;
+    let totalTickets = 0;
+
+    orders.forEach((order) => {
+      totalRevenue += order.totalAmount;
+      order.items.forEach((item) => {
+        const name = item.passName;
+        if (!salesByPassType[name]) salesByPassType[name] = { revenue: 0, count: 0 };
+        salesByPassType[name].revenue += item.unitPrice * item.quantity;
+        salesByPassType[name].count   += item.quantity;
+        totalTickets += item.quantity;
+      });
+    });
+
+    const rows = [];
+    rows.push('Pass Name,Quantity Sold,Revenue (INR)');
+
+    Object.keys(salesByPassType)
+      .sort()
+      .forEach((name) => {
+        const { count, revenue } = salesByPassType[name];
+        const safeName = `"${name.replace(/"/g, '""')}"`;
+        rows.push(`${safeName},${count},${revenue}`);
+      });
+
+    rows.push('');
+    rows.push(`"TOTAL",${totalTickets},${totalRevenue}`);
+    rows.push('');
+    rows.push(`"Report generated","${new Date().toISOString()}",""`);
+    rows.push(`"Total paid orders","${orders.length}",""`);
+
+    const csvBody = rows.join('\r\n');
+    const reportDate = new Date().toISOString().split('T')[0];
+    const filename = `sales_report_${reportDate}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    // UTF-8 BOM for Excel compatibility
+    res.send('\uFEFF' + csvBody);
+  } catch (error) {
+    next(error);
+  }
+};
+
