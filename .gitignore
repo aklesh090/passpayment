@@ -49,3 +49,6 @@ test_*.pdf
 
 # Coverage
 coverage/
+
+.vercel
+.env*

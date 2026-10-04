@@ -1,15 +1,30 @@
 const mongoose = require('mongoose');
 const env = require('./env');
 
+// Global cache for serverless environments (Vercel)
+let cached = global.mongoose;
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
+
 const connectDB = async () => {
-  try {
+  if (cached.conn) {
+    return cached.conn;
+  }
+
+  if (!cached.promise) {
     if (!env.MONGODB_URI) {
       throw new Error('MONGODB_URI is not defined in environment variables');
     }
 
-    const conn = await mongoose.connect(env.MONGODB_URI);
+    const opts = {
+      bufferCommands: false,
+    };
 
-    console.log(`✅ MongoDB connected: ${conn.connection.host}`);
+    cached.promise = mongoose.connect(env.MONGODB_URI, opts).then((mongoose) => {
+      console.log(`✅ MongoDB connected: ${mongoose.connection.host}`);
+      return mongoose;
+    });
 
     mongoose.connection.on('error', (err) => {
       console.error('❌ MongoDB connection error:', err.message);
@@ -25,13 +40,16 @@ const connectDB = async () => {
       console.log('MongoDB connection closed (app termination)');
       process.exit(0);
     });
+  }
 
-    return conn;
-  } catch (error) {
-    console.error('❌ MongoDB connection failed:', error.message);
-    // In production, exit. In development, allow the server to start anyway.
+  try {
+    cached.conn = await cached.promise;
+    return cached.conn;
+  } catch (e) {
+    cached.promise = null;
+    console.error('❌ MongoDB connection failed:', e.message);
     if (env.NODE_ENV === 'production') {
-      process.exit(1);
+      throw e;
     }
   }
 };
