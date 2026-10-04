@@ -22,6 +22,12 @@ const paymentController = require('./controllers/payment.controller');
 const app = express();
 
 // ──────────────────────────────────────────────
+// Trust proxy (required on Vercel / any reverse-proxy host)
+// This fixes the express-rate-limit X-Forwarded-For validation error.
+// ──────────────────────────────────────────────
+app.set('trust proxy', 1);
+
+// ──────────────────────────────────────────────
 // Security middleware
 // ──────────────────────────────────────────────
 app.use(helmet());
